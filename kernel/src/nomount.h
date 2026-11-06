@@ -16,6 +16,42 @@
 #include <linux/version.h>
 #include <linux/compat.h>
 
+/* ===== Linux 3.18 compatibility (oneplus3 auto-patch) ===== */
+#include <linux/aio.h>
+#include <linux/magic.h>
+#include <linux/uio.h>
+#include <linux/xattr.h>
+#include <asm/compat.h>
+
+/* 3.18 has no DCACHE_OP_REAL. */
+#ifndef DCACHE_OP_REAL
+#define DCACHE_OP_REAL 0
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)
+#define in_compat_syscall() is_compat_task()
+#ifndef BPF_FS_MAGIC
+#define BPF_FS_MAGIC 0xCAFE4A11
+#endif
+#define lookup_one_len_unlocked(n, p, l) lookup_one_len(n, p, l)
+#define inode_lock(i)   mutex_lock(&(i)->i_mutex)
+#define inode_unlock(i) mutex_unlock(&(i)->i_mutex)
+#define full_name_hash(_ns, _n, _l) \
+        full_name_hash((const unsigned char *)(_n), (unsigned int)(_l))
+#define __vfs_getxattr(_d, _i, _n, _b, _s) \
+        vfs_getxattr((_d), (_n), (_b), (_s))
+#define __vfs_setxattr(_d, _i, _n, _b, _s, _f) \
+        vfs_setxattr((_d), (_n), (_b), (_s), (_f))
+static inline char *nm_xattr_full(const struct xattr_handler *_h,
+                                 const char *_n, char *_b, size_t _s)
+{
+    snprintf(_b, _s, "%s%s", _h->prefix ? _h->prefix : "", _n);
+    return _b;
+}
+#define xattr_full_name(_h, _n) nm_xattr_full((_h), (_n), (char[256]){0}, 256)
+#endif
+/* ===== end 3.18 compatibility ===== */
+
 #define NOMOUNT_BASE_VERSION "22"
 #ifdef NOMOUNT_COMMIT_COUNT
     #define NOMOUNT_VERSION ""NOMOUNT_BASE_VERSION" ("NOMOUNT_COMMIT_COUNT")"
@@ -42,7 +78,7 @@
 
 static struct nm_uid_array __rcu *nm_uids = NULL;
 static DEFINE_HASHTABLE(nm_leaves_ht, 6);
-static DEFINE_MUTEX(nm_mutex);
+static struct mutex nm_mutex;
 static LIST_HEAD(nm_sb_list);
 static struct nm_rule_array *nm_retired_arrays;
 static struct nm_leaf *nm_retired_leaves;
@@ -410,8 +446,8 @@ static inline void nm_sync_inode_times(struct inode *v_inode, struct inode *r_in
 
 static inline int nm_call_iterate(struct file *file, struct dir_context *ctx, const struct file_operations *fop)
 {
-    if (fop->iterate_shared)
-        return fop->iterate_shared(file, ctx);
+    if (fop->iterate)
+        return fop->iterate(file, ctx);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
     else if (fop->iterate)
         return fop->iterate(file, ctx);
@@ -432,7 +468,7 @@ static inline struct nm_dir_ops *nm_get_nm_iop(const struct inode_operations *io
 
 static inline struct nm_dir_ops *nm_get_nm_fop(const struct file_operations *fop) {
     if (unlikely(!fop)) return NULL;
-    if (fop->iterate_shared == nm_hijacked_iterate_dir)
+    if (fop->iterate == nm_hijacked_iterate_dir)
         return container_of(fop, struct nm_dir_ops, fake_fop);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
     if (fop->iterate == nm_hijacked_iterate_dir)
