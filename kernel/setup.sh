@@ -2,7 +2,9 @@
 set -eu
 
 GKI_ROOT=$(pwd)
-REPO_URL="https://github.com/maxsteeel/nomount"
+# oneplus3 / LineageOS 18.1 (Linux 3.18) fork: keep CI on this tree.
+# Sync manually: git fetch upstream && git merge upstream/dev
+REPO_URL="https://github.com/YUE-GIS/nomount_test_oneplus3"
 REPO_DIR="$GKI_ROOT/NoMount"
 
 display_usage() {
