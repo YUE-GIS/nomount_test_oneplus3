@@ -65,7 +65,8 @@ setup_nomount() {
 
     git reset --hard HEAD --quiet
     if [ -z "${1-}" ]; then
-        git checkout dev --quiet 2>/dev/null || git checkout master --quiet 2>/dev/null
+        # oneplus3: default to the 3.18-compatible v2.3.0 branch
+        git checkout oneplus3-v230 --quiet 2>/dev/null || git checkout dev --quiet 2>/dev/null || git checkout master --quiet 2>/dev/null
         git pull --quiet
         echo "[-] Checked out and updated default branch."
     else
