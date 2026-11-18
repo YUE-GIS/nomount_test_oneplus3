@@ -17,7 +17,7 @@
 #include <linux/compat.h>
 
 
-/* ===== Linux 3.18 compatibility (oneplus3, replayed onto v2.3.0) ===== */
+/* ===== Linux 3.18 compatibility (oneplus3 auto-patch, replayed onto v2.3.0) ===== */
 #include <linux/aio.h>
 #include <linux/uio.h>
 #include <asm/compat.h>
