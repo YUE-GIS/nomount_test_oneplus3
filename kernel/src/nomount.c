@@ -549,7 +549,11 @@ do_real_unlink:
 }
 
 static int nm_hijacked_rename(IDMAP_ARG struct inode *old_dir, struct dentry *old_dentry,
-                               struct inode *new_dir, struct dentry *new_dentry, unsigned int flags)
+                               struct inode *new_dir, struct dentry *new_dentry
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
+                               , unsigned int flags
+#endif
+)
 {
     struct inode *old_inode = d_inode(old_dentry);
     struct inode *new_inode = d_inode(new_dentry);
@@ -560,7 +564,11 @@ static int nm_hijacked_rename(IDMAP_ARG struct inode *old_dir, struct dentry *ol
 
     iop = nm_get_nm_iop(smp_load_acquire(&old_dir->i_op));
     if (iop && iop->orig_iop && iop->orig_iop->rename)
-        return iop->orig_iop->rename(IDMAP_CALL old_dir, old_dentry, new_dir, new_dentry, flags);
+        return iop->orig_iop->rename(IDMAP_CALL old_dir, old_dentry, new_dir, new_dentry
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
+                                     , flags
+#endif
+        );
     return -EPERM;
 }
 
