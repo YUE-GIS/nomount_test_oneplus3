@@ -850,6 +850,31 @@ static const char *nm_get_link(struct dentry *dentry, struct inode *inode, struc
 }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)
+/*
+ * Linux 3.18 has no ->get_link(); symlinks are read via ->readlink().
+ * Forward to the backing inode's own readlink so a redirected symlink
+ * reports the real target instead of failing with -EINVAL.
+ */
+static int nm_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+{
+    struct inode *inode = d_inode(dentry);
+    struct nm_inode_info *info;
+    struct inode *real_inode;
+
+    if (unlikely(!inode)) return -EINVAL;
+
+    info = inode->i_private;
+    if (unlikely(!info || !info->r_path.dentry)) return -ECHILD;
+
+    real_inode = d_inode(info->r_path.dentry);
+    if (!real_inode || !real_inode->i_op || !real_inode->i_op->readlink)
+        return -EINVAL;
+
+    return real_inode->i_op->readlink(info->r_path.dentry, buffer, buflen);
+}
+#endif
+
 static int nm_dir_iterate_dir(struct file *file, struct dir_context *ctx)
 {
     struct nm_inode_info *info = READ_ONCE(file_inode(file)->i_private);
@@ -1134,6 +1159,8 @@ static const struct inode_operations nm_file_iops = {
     .listxattr = nm_listxattr,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
     .get_link = nm_get_link,
+#else
+    .readlink = nm_readlink,
 #endif
 };
 
