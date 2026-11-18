@@ -2,7 +2,7 @@
 set -eu
 
 GKI_ROOT=$(pwd)
-REPO_URL="https://github.com/maxsteeel/nomount"
+REPO_URL="https://github.com/YUE-GIS/nomount_test_oneplus3"
 REPO_DIR="$GKI_ROOT/NoMount"
 
 display_usage() {

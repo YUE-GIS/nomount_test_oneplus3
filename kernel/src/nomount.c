@@ -469,7 +469,7 @@ static int nm_iterate_view(struct file *file, struct dir_context *ctx, const str
         return nm_call_iterate(real_file, ctx, fop);
 
     struct nm_proxy_ctx proxy_ctx = {
-        .ctx.actor = nm_actor_proxy, .ctx.pos = ctx->pos, .orig_ctx = ctx,
+        .ctx.actor = (filldir_t)nm_actor_proxy, .ctx.pos = ctx->pos, .orig_ctx = ctx,
         .dir_node = dir_node, .fsuid = fsuid, .native_view = native_view,
     };
     res = nm_call_iterate(real_file, &proxy_ctx.ctx, fop);
@@ -824,6 +824,7 @@ static int nm_setattr(IDMAP_ARG struct dentry *dentry, struct iattr *attr)
     return err;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
 static const char *nm_get_link(struct dentry *dentry, struct inode *inode, struct delayed_call *done)
 {
     struct nm_inode_info *info = inode->i_private;
@@ -839,6 +840,7 @@ static const char *nm_get_link(struct dentry *dentry, struct inode *inode, struc
 
     return ERR_PTR(-EINVAL);
 }
+#endif
 
 static int nm_dir_iterate_dir(struct file *file, struct dir_context *ctx)
 {
@@ -922,7 +924,7 @@ struct nm_xattr_proxy {
     const struct xattr_handler *orig;
 };
 
-static int nm_xattr_get(const struct xattr_handler *handler, struct dentry *dentry, struct inode *inode, const char *name, void *buffer, size_t size FLAGS_ARG)
+static int __maybe_unused nm_xattr_get(const struct xattr_handler *handler, struct dentry *dentry, struct inode *inode, const char *name, void *buffer, size_t size FLAGS_ARG)
 {
     struct nm_xattr_proxy *proxy = container_of(handler, struct nm_xattr_proxy, fake);
     if (nm_inode_is_virtual(inode)) {
@@ -931,7 +933,11 @@ static int nm_xattr_get(const struct xattr_handler *handler, struct dentry *dent
         return __vfs_getxattr(info->r_path.dentry, d_inode(info->r_path.dentry), xattr_full_name(handler, name), buffer, size FLAGS_VAL);
     }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)
+    return proxy->orig->get(dentry, name, buffer, size, proxy->orig->flags);
+#else
     return proxy->orig->get(proxy->orig, dentry, inode, name, buffer, size FLAGS_VAL);
+#endif
 }
 
 #ifdef NM_HAS_XATTR__GET
@@ -951,7 +957,7 @@ static int nm_xattr__get(const struct xattr_handler *handler, struct dentry *den
 }
 #endif
 
-static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct dentry *dentry,
+static int __maybe_unused nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct dentry *dentry,
                         struct inode *inode, const char *name, const void *buffer, size_t size, int flags)
 {
     struct nm_xattr_proxy *proxy = container_of(handler, struct nm_xattr_proxy, fake);
@@ -966,7 +972,11 @@ static int nm_xattr_set(const struct xattr_handler *handler, IDMAP_ARG struct de
             return vfs_setxattr(IDMAP_PATH(info->r_path) info->r_path.dentry, full_name, buffer, size, flags);
         return vfs_removexattr(IDMAP_PATH(info->r_path) info->r_path.dentry, full_name);
     }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)
+    return proxy->orig->set(dentry, name, buffer, size, flags, proxy->orig->flags);
+#else
     return proxy->orig->set(proxy->orig, IDMAP_CALL dentry, inode, name, buffer, size, flags);
+#endif
 }
 
 static int nm_shutdown_sync_fs(struct super_block *sb, int wait)
@@ -1114,7 +1124,9 @@ static const struct inode_operations nm_file_iops = {
     .getattr = nm_getattr,
     .setattr = nm_setattr,
     .listxattr = nm_listxattr,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
     .get_link = nm_get_link,
+#endif
 };
 
 static const struct file_operations nm_dir_fops = {
@@ -1123,7 +1135,9 @@ static const struct file_operations nm_dir_fops = {
     .release = nm_release,
     .llseek = default_llseek,
     .read = generic_read_dir,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
     .iterate_shared = nm_dir_iterate_dir,
+#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
     .iterate = nm_dir_iterate_dir,
 #endif
@@ -1184,11 +1198,15 @@ static int nm_hijack_superblock(struct super_block *sb, bool with_xattr)
         for (int i = 0; i < count; i++) {
             proxies[i].orig = sb->s_xattr[i];
             proxies[i].fake = *sb->s_xattr[i];
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
             if (proxies[i].fake.get) proxies[i].fake.get = nm_xattr_get;
+#endif
 #ifdef NM_HAS_XATTR__GET
             if (proxies[i].fake.__get) proxies[i].fake.__get = nm_xattr__get;
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
             if (proxies[i].fake.set) proxies[i].fake.set = nm_xattr_set;
+#endif
             new_array[i] = &proxies[i].fake;
         }
         nm_sop->orig_xattr = (const struct xattr_handler **)sb->s_xattr;
@@ -1209,7 +1227,7 @@ static inline int nm_hijack_dir_ops(struct nm_dir_node *dir_node, struct inode *
     if (ops) return ops->dir_node == dir_node ? 0 : -EBUSY;
     const struct file_operations *fop = smp_load_acquire(&inode->i_fop);
     if ((ops = nm_get_nm_fop(fop))) return ops->dir_node == dir_node ? 0 : -EBUSY;
-    bool iterate = fop && (fop->iterate_shared
+    bool iterate = fop && (fop->iterate
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
         || fop->iterate
 #endif
@@ -1236,7 +1254,9 @@ static inline int nm_hijack_dir_ops(struct nm_dir_node *dir_node, struct inode *
     if (fop) {
         ops->fake_fop = *fop;
         ops->fake_fop.owner = THIS_MODULE;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
         if (fop->iterate_shared) ops->fake_fop.iterate_shared = nm_hijacked_iterate_dir;
+#endif
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
         if (fop->iterate) ops->fake_fop.iterate = nm_hijacked_iterate_dir;
 #endif
@@ -1297,6 +1317,7 @@ static void nm_hijack_dentry_ops(struct inode *dir, struct dentry *dentry, bool 
 
 static void nm_clear_dops_sb(struct super_block *sb)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
     struct inode *inode;
     struct dentry *dentry;
     spin_lock(&sb->s_inode_list_lock);
@@ -1329,20 +1350,27 @@ static void nm_clear_dops_sb(struct super_block *sb)
         spin_unlock(&inode->i_lock);
     }
     spin_unlock(&sb->s_inode_list_lock);
+#else
+    (void)sb;
+#endif
 }
 
 static void nm_restore_superblocks(void)
 {
     struct nm_sop *nm_sop, *tmp;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
     struct inode *inode;
+#endif
     list_for_each_entry_safe(nm_sop, tmp, &nm_sb_list, list) {
         if (nm_sop->sb) {
             nm_clear_dops_sb(nm_sop->sb);
             shrink_dcache_sb(nm_sop->sb);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
             spin_lock(&nm_sop->sb->s_inode_list_lock);
             list_for_each_entry(inode, &nm_sop->sb->s_inodes, i_sb_list)
                 nm_destroy_hijacked_inode(inode);
             spin_unlock(&nm_sop->sb->s_inode_list_lock);
+#endif
             if (READ_ONCE(nm_sop->sb->s_op) == &nm_sop->fake_sop)
                 smp_store_release(&nm_sop->sb->s_op, nm_sop->orig_sop);
             if (nm_sop->fake_xattr) {
@@ -2200,6 +2228,7 @@ static struct key_type nm_key_type = {
 
 static int __init nomount_init(void)
 {
+    mutex_init(&nm_mutex);
     int ret = register_key_type(&nm_key_type);
     if (ret)
         nm_err("Failed to register key type (err: %d)\n", ret);
